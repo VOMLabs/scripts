@@ -85,6 +85,9 @@ type Model struct {
 	width       int
 	height      int
 	ready       bool
+	inputMode   bool
+	inputArgs   string
+	inputTarget string
 }
 
 func New(scripts []executor.Script, apiKey string) Model {
@@ -108,6 +111,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		if m.inputMode {
+			return m.handleInputKey(msg)
+		}
 		switch msg.String() {
 		case "q", "ctrl+c":
 			for _, inst := range m.running {
@@ -121,14 +127,67 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		if !m.showSidebar {
+			switch msg.String() {
+			case "up", "k":
+				if m.vpOffset > 0 {
+					m.vpOffset--
+				}
+			case "down", "j":
+				if m.vpOffset < len(m.outputLines)-m.vpHeight {
+					m.vpOffset++
+				}
+			case "pgup":
+				m.vpOffset -= m.vpHeight / 2
+				if m.vpOffset < 0 {
+					m.vpOffset = 0
+				}
+			case "pgdown":
+				m.vpOffset += m.vpHeight / 2
+				maxOffset := len(m.outputLines) - m.vpHeight
+				if maxOffset < 0 {
+					maxOffset = 0
+				}
+				if m.vpOffset > maxOffset {
+					m.vpOffset = maxOffset
+				}
+			case "g":
+				m.vpOffset = 0
+			case "G":
+				m.vpOffset = len(m.outputLines) - m.vpHeight
+				if m.vpOffset < 0 {
+					m.vpOffset = 0
+				}
+			case "r":
+				m.orEnabled = !m.orEnabled
+			}
+			return m, nil
+		}
+
+		// Sidebar navigation + output scrolling
 		switch msg.String() {
 		case "up", "k":
-			if m.vpOffset > 0 {
-				m.vpOffset--
+			if m.cursor > 0 {
+				m.cursor--
+				if m.cursor < m.listOffset {
+					m.listOffset = m.cursor
+				}
 			}
 		case "down", "j":
-			if m.vpOffset < len(m.outputLines)-m.vpHeight {
-				m.vpOffset++
+			if m.cursor < len(m.scripts)-1 {
+				m.cursor++
+				maxVisible := m.height - 8
+				if m.cursor-m.listOffset >= maxVisible {
+					m.listOffset = m.cursor - maxVisible + 1
+				}
+			}
+		case "enter":
+			if len(m.scripts) > 0 {
+				s := m.scripts[m.cursor]
+				m.inputMode = true
+				m.inputArgs = ""
+				m.inputTarget = s.Name
+				return m, nil
 			}
 		case "pgup":
 			m.vpOffset -= m.vpHeight / 2
@@ -153,44 +212,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "r":
 			m.orEnabled = !m.orEnabled
-		}
-
-		// Sidebar navigation (only when visible and not consumed above)
-		if m.showSidebar {
-			switch msg.String() {
-			case "up", "k":
-				if m.cursor > 0 {
-					m.cursor--
-					if m.cursor < m.listOffset {
-						m.listOffset = m.cursor
-					}
-				}
-			case "down", "j":
-				if m.cursor < len(m.scripts)-1 {
-					m.cursor++
-					maxVisible := m.height - 8
-					if m.cursor-m.listOffset >= maxVisible {
-						m.listOffset = m.cursor - maxVisible + 1
-					}
-				}
-			case "enter":
-				if len(m.scripts) > 0 {
-					s := m.scripts[m.cursor]
-					name := s.Name
-					if _, ok := m.running[name]; ok {
-						return m, nil
-					}
-					ctx, cancel := context.WithCancel(context.Background())
-					m.running[name] = &runInstance{cancel: cancel}
-					vpLine := fmt.Sprintf("[%s] started", name)
-					m.outputLines = append(m.outputLines, vpLine)
-					m.vpOffset = len(m.outputLines) - m.vpHeight
-					if m.vpOffset < 0 {
-						m.vpOffset = 0
-					}
-					return m, runScript(ctx, name, s)
-				}
-			}
 		}
 
 	case outputMsg:
@@ -244,17 +265,90 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func runScript(ctx context.Context, name string, s executor.Script) tea.Cmd {
+func (m Model) handleInputKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "q", "ctrl+c":
+		for _, inst := range m.running {
+			if inst.cancel != nil {
+				inst.cancel()
+			}
+		}
+		return m, tea.Quit
+	case "enter":
+		if m.inputTarget == "" {
+			m.inputMode = false
+			return m, nil
+		}
+		var s *executor.Script
+		for i := range m.scripts {
+			if m.scripts[i].Name == m.inputTarget {
+				s = &m.scripts[i]
+				break
+			}
+		}
+		if s == nil {
+			m.inputMode = false
+			return m, nil
+		}
+		if _, ok := m.running[s.Name]; ok {
+			m.inputMode = false
+			return m, nil
+		}
+		args := parseArgs(m.inputArgs)
+		ctx, cancel := context.WithCancel(context.Background())
+		m.running[s.Name] = &runInstance{cancel: cancel}
+		startLine := fmt.Sprintf("[%s] started", s.Name)
+		if len(args) > 0 {
+			startLine = fmt.Sprintf("[%s] started with: %s", s.Name, m.inputArgs)
+		}
+		m.outputLines = append(m.outputLines, startLine)
+		m.vpOffset = len(m.outputLines) - m.vpHeight
+		if m.vpOffset < 0 {
+			m.vpOffset = 0
+		}
+		m.inputMode = false
+		return m, runScript(ctx, s.Name, *s, args)
+
+	case "esc":
+		m.inputMode = false
+		return m, nil
+
+	case "backspace":
+		if len(m.inputArgs) > 0 {
+			m.inputArgs = m.inputArgs[:len(m.inputArgs)-1]
+		}
+		return m, nil
+
+	case "space":
+		m.inputArgs += " "
+		return m, nil
+
+	default:
+		if len(msg.String()) == 1 {
+			m.inputArgs += msg.String()
+		}
+		return m, nil
+	}
+}
+
+func parseArgs(s string) []string {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	return strings.Fields(s)
+}
+
+func runScript(ctx context.Context, name string, s executor.Script, args []string) tea.Cmd {
 	base := func(line string) outputMsg { return outputMsg{name: name, line: line} }
 	done := func(err error) scriptDone { return scriptDone{name: name, err: err} }
 
 	if s.Type == executor.TypeCompilable {
-		return runCompilable(ctx, s, base, done)
+		return runCompilable(ctx, s, args, base, done)
 	}
-	return runDirect(ctx, s, base, done)
+	return runDirect(ctx, s, args, base, done)
 }
 
-func runCompilable(ctx context.Context, s executor.Script, base func(string) outputMsg, done func(error) scriptDone) tea.Cmd {
+func runCompilable(ctx context.Context, s executor.Script, args []string, base func(string) outputMsg, done func(error) scriptDone) tea.Cmd {
 	compileCmd := executor.CompileCommand(s)
 	cmd := exec.CommandContext(ctx, compileCmd.Path, compileCmd.Args[1:]...)
 
@@ -301,7 +395,7 @@ func runCompilable(ctx context.Context, s executor.Script, base func(string) out
 
 		case phaseRun:
 			if runScanner == nil {
-				runCmd := executor.RunCompiledCmd(s)
+				runCmd := executor.RunCompiledCmd(s, args...)
 				runCmd = exec.CommandContext(ctx, runCmd.Path, runCmd.Args[1:]...)
 				rStdout, err := runCmd.StdoutPipe()
 				if err != nil {
@@ -336,8 +430,8 @@ func runCompilable(ctx context.Context, s executor.Script, base func(string) out
 	}
 }
 
-func runDirect(ctx context.Context, s executor.Script, base func(string) outputMsg, done func(error) scriptDone) tea.Cmd {
-	cmd, err := executor.Command(s)
+func runDirect(ctx context.Context, s executor.Script, args []string, base func(string) outputMsg, done func(error) scriptDone) tea.Cmd {
+	cmd, err := executor.Command(s, args...)
 	if err != nil {
 		return func() tea.Msg { return done(err) }
 	}
@@ -519,6 +613,15 @@ func (m Model) renderOutput(width, height int) string {
 }
 
 func (m Model) renderStatus(width int) string {
+	if m.inputMode {
+		prompt := fmt.Sprintf(" Args for %s: %s█ ", m.inputTarget, m.inputArgs)
+		return lipgloss.NewStyle().
+			Width(width).
+			Background(lipgloss.Color("#1E3A5F")).
+			Foreground(lipgloss.Color("#FFFFFF")).
+			Render(prompt)
+	}
+
 	runningCount := len(m.running)
 	runningNames := ""
 	if runningCount > 0 {

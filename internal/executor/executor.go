@@ -115,29 +115,32 @@ func FindScripts(dir string) ([]Script, error) {
 	return scripts, nil
 }
 
-func Command(s Script) (*exec.Cmd, error) {
+func Command(s Script, args ...string) (*exec.Cmd, error) {
 	ext := filepath.Ext(s.Name)
+	allArgs := func(base ...string) []string {
+		return append(base, args...)
+	}
 	switch ext {
 	case ".sh", ".bash":
-		return exec.Command("bash", s.Path), nil
+		return exec.Command("bash", allArgs(s.Path)...), nil
 	case ".zsh":
-		return exec.Command("zsh", s.Path), nil
+		return exec.Command("zsh", allArgs(s.Path)...), nil
 	case ".fish":
-		return exec.Command("fish", s.Path), nil
+		return exec.Command("fish", allArgs(s.Path)...), nil
 	case ".py", ".pyw":
-		return exec.Command("python3", s.Path), nil
+		return exec.Command("python3", allArgs(s.Path)...), nil
 	case ".js", ".mjs", ".cjs":
-		return exec.Command("node", s.Path), nil
+		return exec.Command("node", allArgs(s.Path)...), nil
 	case ".rb":
-		return exec.Command("ruby", s.Path), nil
+		return exec.Command("ruby", allArgs(s.Path)...), nil
 	case ".pl", ".pm":
-		return exec.Command("perl", s.Path), nil
+		return exec.Command("perl", allArgs(s.Path)...), nil
 	case ".lua":
-		return exec.Command("lua", s.Path), nil
+		return exec.Command("lua", allArgs(s.Path)...), nil
 	case ".ts", ".tsx":
-		return exec.Command("npx", "tsx", s.Path), nil
+		return exec.Command("npx", allArgs(s.Path)...), nil
 	default:
-		return exec.Command(s.Path), nil
+		return exec.Command(s.Path, args...), nil
 	}
 }
 
@@ -163,8 +166,10 @@ func CompileCommand(s Script) *exec.Cmd {
 	}
 }
 
-func RunCompiledCmd(s Script) *exec.Cmd {
-	return exec.Command(BinaryPath(s))
+func RunCompiledCmd(s Script, args ...string) *exec.Cmd {
+	cmd := exec.Command(BinaryPath(s))
+	cmd.Args = append(cmd.Args, args...)
+	return cmd
 }
 
 func Cleanup(name string) {

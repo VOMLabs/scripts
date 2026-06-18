@@ -25,7 +25,8 @@ func main() {
 	}
 
 	if len(os.Args) > 2 && os.Args[1] == "--notui" {
-		runNoTUI(os.Args[2])
+		args := os.Args[3:]
+		runNoTUI(os.Args[2], args...)
 		return
 	}
 
@@ -65,7 +66,7 @@ func main() {
 	}
 }
 
-func runNoTUI(file string) {
+func runNoTUI(file string, args ...string) {
 	absPath, err := filepath.Abs(file)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error resolving path: %v\n", err)
@@ -101,9 +102,9 @@ func runNoTUI(file string) {
 			os.Exit(1)
 		}
 		defer executor.Cleanup(name)
-		cmd = executor.RunCompiledCmd(s)
+		cmd = executor.RunCompiledCmd(s, args...)
 	default:
-		cmd, err = executor.Command(s)
+		cmd, err = executor.Command(s, args...)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
