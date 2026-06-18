@@ -100,8 +100,8 @@ func runNoTUI(file string) {
 			fmt.Fprintf(os.Stderr, "Compile failed: %v\n", cerr)
 			os.Exit(1)
 		}
-		defer executor.Cleanup()
-		cmd = executor.RunCompiledCmd()
+		defer executor.Cleanup(name)
+		cmd = executor.RunCompiledCmd(s)
 	default:
 		cmd, err = executor.Command(s)
 		if err != nil {

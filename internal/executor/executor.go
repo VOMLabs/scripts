@@ -1,6 +1,8 @@
 package executor
 
 import (
+	"crypto/md5"
+	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -139,26 +141,33 @@ func Command(s Script) (*exec.Cmd, error) {
 	}
 }
 
+func BinaryPath(s Script) string {
+	hash := md5.Sum([]byte(s.Path))
+	return filepath.Join(os.TempDir(), fmt.Sprintf("scripty_%x", hash[:4]))
+}
+
 func CompileCommand(s Script) *exec.Cmd {
+	out := BinaryPath(s)
 	ext := filepath.Ext(s.Name)
 	switch ext {
 	case ".go":
-		return exec.Command("go", "build", "-o", "/tmp/scripty_out", s.Path)
+		return exec.Command("go", "build", "-o", out, s.Path)
 	case ".c":
-		return exec.Command("gcc", "-o", "/tmp/scripty_out", s.Path)
+		return exec.Command("gcc", "-o", out, s.Path)
 	case ".cc", ".cpp", ".cxx":
-		return exec.Command("g++", "-o", "/tmp/scripty_out", s.Path)
+		return exec.Command("g++", "-o", out, s.Path)
 	case ".rs":
-		return exec.Command("rustc", "-o", "/tmp/scripty_out", s.Path)
+		return exec.Command("rustc", "-o", out, s.Path)
 	default:
 		return nil
 	}
 }
 
-func RunCompiledCmd() *exec.Cmd {
-	return exec.Command("/tmp/scripty_out")
+func RunCompiledCmd(s Script) *exec.Cmd {
+	return exec.Command(BinaryPath(s))
 }
 
-func Cleanup() {
-	os.Remove("/tmp/scripty_out")
+func Cleanup(name string) {
+	hash := md5.Sum([]byte(name))
+	os.Remove(filepath.Join(os.TempDir(), fmt.Sprintf("scripty_%x", hash[:4])))
 }

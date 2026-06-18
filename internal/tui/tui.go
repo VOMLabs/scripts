@@ -15,11 +15,18 @@ import (
 	"scripts/internal/openrouter"
 )
 
-type outputMsg string
-type scriptDone struct{ err error }
+type outputMsg struct {
+	name string
+	line string
+}
+
+type scriptDone struct {
+	name string
+	err  error
+}
+
 type orResult string
 type orError struct{ err error }
-type compileSkipped struct{}
 
 var (
 	titleStyle = lipgloss.NewStyle().
@@ -36,6 +43,9 @@ var (
 			Foreground(lipgloss.Color("#22C55E")).
 			Bold(true)
 
+	doneStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#6B7280"))
+
 	orOnStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#22C55E")).
 			Bold(true)
@@ -45,32 +55,44 @@ var (
 
 	idleStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#6B7280"))
+
+	labelStyles = []lipgloss.Style{
+		lipgloss.NewStyle().Foreground(lipgloss.Color("#60A5FA")).Bold(true),
+		lipgloss.NewStyle().Foreground(lipgloss.Color("#F472B6")).Bold(true),
+		lipgloss.NewStyle().Foreground(lipgloss.Color("#34D399")).Bold(true),
+		lipgloss.NewStyle().Foreground(lipgloss.Color("#FBBF24")).Bold(true),
+		lipgloss.NewStyle().Foreground(lipgloss.Color("#A78BFA")).Bold(true),
+		lipgloss.NewStyle().Foreground(lipgloss.Color("#FB923C")).Bold(true),
+	}
 )
 
+type runInstance struct {
+	cancel context.CancelFunc
+	err    error
+}
+
 type Model struct {
-	scripts          []executor.Script
-	cursor           int
-	listOffset       int
-	output           strings.Builder
-	outputLines      []string
-	vpWidth          int
-	vpHeight         int
-	vpOffset         int
-	running          bool
-	runErr           error
-	currentScript    string
-	orEnabled        bool
-	apiKey           string
-	width            int
-	height           int
-	ready            bool
-	cancel           context.CancelFunc
+	scripts     []executor.Script
+	cursor      int
+	listOffset  int
+	showSidebar bool
+	running     map[string]*runInstance
+	outputLines []string
+	vpOffset    int
+	vpHeight    int
+	orEnabled   bool
+	apiKey      string
+	width       int
+	height      int
+	ready       bool
 }
 
 func New(scripts []executor.Script, apiKey string) Model {
 	return Model{
-		scripts: scripts,
-		apiKey:  apiKey,
+		scripts:     scripts,
+		apiKey:      apiKey,
+		showSidebar: true,
+		running:     make(map[string]*runInstance),
 	}
 }
 
@@ -81,7 +103,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.vpWidth = m.width*7/10 - 2
 		m.vpHeight = m.height - 5
 		m.ready = true
 		return m, nil
@@ -89,85 +110,91 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "ctrl+c":
-			if m.cancel != nil {
-				m.cancel()
+			for _, inst := range m.running {
+				if inst.cancel != nil {
+					inst.cancel()
+				}
 			}
 			return m, tea.Quit
-		}
-
-		if m.running {
-			switch msg.String() {
-			case "up", "k":
-				if m.vpOffset > 0 {
-					m.vpOffset--
-				}
-			case "down", "j":
-				if m.vpOffset < len(m.outputLines)-m.vpHeight {
-					m.vpOffset++
-				}
-			case "pgup":
-				m.vpOffset -= m.vpHeight / 2
-				if m.vpOffset < 0 {
-					m.vpOffset = 0
-				}
-			case "pgdown":
-				m.vpOffset += m.vpHeight / 2
-				maxOffset := len(m.outputLines) - m.vpHeight
-				if maxOffset < 0 {
-					maxOffset = 0
-				}
-				if m.vpOffset > maxOffset {
-					m.vpOffset = maxOffset
-				}
-			case "g":
-				m.vpOffset = 0
-			case "G":
-				m.vpOffset = len(m.outputLines) - m.vpHeight
-				if m.vpOffset < 0 {
-					m.vpOffset = 0
-				}
-			}
+		case "s":
+			m.showSidebar = !m.showSidebar
 			return m, nil
 		}
 
 		switch msg.String() {
 		case "up", "k":
-			if m.cursor > 0 {
-				m.cursor--
-				if m.cursor < m.listOffset {
-					m.listOffset = m.cursor
-				}
+			if m.vpOffset > 0 {
+				m.vpOffset--
 			}
 		case "down", "j":
-			if m.cursor < len(m.scripts)-1 {
-				m.cursor++
-				maxVisible := m.height - 8
-				if m.cursor-m.listOffset >= maxVisible {
-					m.listOffset = m.cursor - maxVisible + 1
-				}
+			if m.vpOffset < len(m.outputLines)-m.vpHeight {
+				m.vpOffset++
 			}
-		case "enter":
-			if !m.running && len(m.scripts) > 0 {
-				s := m.scripts[m.cursor]
-				ctx, cancel := context.WithCancel(context.Background())
-				m.cancel = cancel
-				m.running = true
-				m.currentScript = s.Name
-				m.output.Reset()
-				m.outputLines = nil
+		case "pgup":
+			m.vpOffset -= m.vpHeight / 2
+			if m.vpOffset < 0 {
 				m.vpOffset = 0
-				m.runErr = nil
-				return m, runScript(ctx, s)
+			}
+		case "pgdown":
+			m.vpOffset += m.vpHeight / 2
+			maxOffset := len(m.outputLines) - m.vpHeight
+			if maxOffset < 0 {
+				maxOffset = 0
+			}
+			if m.vpOffset > maxOffset {
+				m.vpOffset = maxOffset
+			}
+		case "g":
+			m.vpOffset = 0
+		case "G":
+			m.vpOffset = len(m.outputLines) - m.vpHeight
+			if m.vpOffset < 0 {
+				m.vpOffset = 0
 			}
 		case "r":
-			if !m.running {
-				m.orEnabled = !m.orEnabled
+			m.orEnabled = !m.orEnabled
+		}
+
+		// Sidebar navigation (only when visible and not consumed above)
+		if m.showSidebar {
+			switch msg.String() {
+			case "up", "k":
+				if m.cursor > 0 {
+					m.cursor--
+					if m.cursor < m.listOffset {
+						m.listOffset = m.cursor
+					}
+				}
+			case "down", "j":
+				if m.cursor < len(m.scripts)-1 {
+					m.cursor++
+					maxVisible := m.height - 8
+					if m.cursor-m.listOffset >= maxVisible {
+						m.listOffset = m.cursor - maxVisible + 1
+					}
+				}
+			case "enter":
+				if len(m.scripts) > 0 {
+					s := m.scripts[m.cursor]
+					name := s.Name
+					if _, ok := m.running[name]; ok {
+						return m, nil
+					}
+					ctx, cancel := context.WithCancel(context.Background())
+					m.running[name] = &runInstance{cancel: cancel}
+					vpLine := fmt.Sprintf("[%s] started", name)
+					m.outputLines = append(m.outputLines, vpLine)
+					m.vpOffset = len(m.outputLines) - m.vpHeight
+					if m.vpOffset < 0 {
+						m.vpOffset = 0
+					}
+					return m, runScript(ctx, name, s)
+				}
 			}
 		}
 
 	case outputMsg:
-		line := string(msg)
-		m.output.WriteString(line + "\n")
+		line := fmt.Sprintf("[%s] %s", msg.name, msg.line)
 		m.outputLines = append(m.outputLines, line)
 		if m.vpOffset >= len(m.outputLines)-m.vpHeight-1 {
 			m.vpOffset = len(m.outputLines) - m.vpHeight
@@ -178,25 +205,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case scriptDone:
-		m.running = false
-		m.runErr = msg.err
-		m.cancel = nil
-		executor.Cleanup()
-		if m.orEnabled && m.apiKey != "" && m.output.Len() > 0 {
-			return m, processWithOR(m.output.String(), m.apiKey)
+		if inst, ok := m.running[msg.name]; ok {
+			inst.err = msg.err
 		}
-		return m, nil
-
-	case compileSkipped:
+		delete(m.running, msg.name)
+		exitLine := fmt.Sprintf("[%s] exited", msg.name)
+		if msg.err != nil {
+			exitLine = fmt.Sprintf("[%s] error: %s", msg.name, msg.err)
+		}
+		m.outputLines = append(m.outputLines, exitLine)
+		m.vpOffset = len(m.outputLines) - m.vpHeight
+		if m.vpOffset < 0 {
+			m.vpOffset = 0
+		}
+		executor.Cleanup(msg.name)
+		if m.orEnabled && m.apiKey != "" {
+			return m, processWithOR(m.outputLines, m.apiKey)
+		}
 		return m, nil
 
 	case orResult:
 		lines := strings.Split(string(msg), "\n")
-		header := "--- OpenRouter Output ---"
-		m.output.WriteString("\n" + header + "\n")
-		m.outputLines = append(m.outputLines, "", header)
+		m.outputLines = append(m.outputLines, "", "--- OpenRouter Output ---")
 		for _, l := range lines {
-			m.output.WriteString(l + "\n")
 			m.outputLines = append(m.outputLines, l)
 		}
 		m.vpOffset = len(m.outputLines) - m.vpHeight
@@ -206,43 +237,43 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case orError:
-		errLine := fmt.Sprintf("--- OpenRouter Error: %s ---", msg.err)
-		m.output.WriteString("\n" + errLine + "\n")
-		m.outputLines = append(m.outputLines, "", errLine)
+		m.outputLines = append(m.outputLines, "", fmt.Sprintf("--- OpenRouter Error: %s ---", msg.err))
 		return m, nil
 	}
 
 	return m, nil
 }
 
-func runScript(ctx context.Context, s executor.Script) tea.Cmd {
+func runScript(ctx context.Context, name string, s executor.Script) tea.Cmd {
+	base := func(line string) outputMsg { return outputMsg{name: name, line: line} }
+	done := func(err error) scriptDone { return scriptDone{name: name, err: err} }
+
 	if s.Type == executor.TypeCompilable {
-		return runCompilable(ctx, s)
+		return runCompilable(ctx, s, base, done)
 	}
-	return runDirect(ctx, s)
+	return runDirect(ctx, s, base, done)
 }
 
-func runCompilable(ctx context.Context, s executor.Script) tea.Cmd {
+func runCompilable(ctx context.Context, s executor.Script, base func(string) outputMsg, done func(error) scriptDone) tea.Cmd {
 	compileCmd := executor.CompileCommand(s)
-	compileCmd = exec.CommandContext(ctx, compileCmd.Path, compileCmd.Args[1:]...)
+	cmd := exec.CommandContext(ctx, compileCmd.Path, compileCmd.Args[1:]...)
 
-	stdout, err := compileCmd.StdoutPipe()
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return func() tea.Msg { return scriptDone{err: err} }
+		return func() tea.Msg { return done(err) }
 	}
-	stderr, err := compileCmd.StderrPipe()
+	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		return func() tea.Msg { return scriptDone{err: err} }
+		return func() tea.Msg { return done(err) }
 	}
-
-	if err := compileCmd.Start(); err != nil {
-		return func() tea.Msg { return scriptDone{err: err} }
+	if err := cmd.Start(); err != nil {
+		return func() tea.Msg { return done(err) }
 	}
 
 	reader := io.MultiReader(stdout, stderr)
 	scanner := bufio.NewScanner(reader)
 	compileDone := make(chan error, 1)
-	go func() { compileDone <- compileCmd.Wait() }()
+	go func() { compileDone <- cmd.Wait() }()
 
 	type phase int
 	const (
@@ -259,32 +290,32 @@ func runCompilable(ctx context.Context, s executor.Script) tea.Cmd {
 		switch p {
 		case phaseCompile:
 			if scanner.Scan() {
-				return outputMsg(scanner.Text())
+				return base(scanner.Text())
 			}
 			if err := <-compileDone; err != nil {
 				p = phaseDone
-				return scriptDone{err: fmt.Errorf("compile failed: %w", err)}
+				return done(fmt.Errorf("compile failed: %w", err))
 			}
 			p = phaseRun
-			return outputMsg("--- Compilation OK, running ---")
+			return base("--- Compilation OK, running ---")
 
 		case phaseRun:
 			if runScanner == nil {
-				runCmd := executor.RunCompiledCmd()
+				runCmd := executor.RunCompiledCmd(s)
 				runCmd = exec.CommandContext(ctx, runCmd.Path, runCmd.Args[1:]...)
 				rStdout, err := runCmd.StdoutPipe()
 				if err != nil {
 					p = phaseDone
-					return scriptDone{err: err}
+					return done(err)
 				}
 				rStderr, err := runCmd.StderrPipe()
 				if err != nil {
 					p = phaseDone
-					return scriptDone{err: err}
+					return done(err)
 				}
 				if err := runCmd.Start(); err != nil {
 					p = phaseDone
-					return scriptDone{err: err}
+					return done(err)
 				}
 				rReader := io.MultiReader(rStdout, rStderr)
 				runScanner = bufio.NewScanner(rReader)
@@ -292,11 +323,11 @@ func runCompilable(ctx context.Context, s executor.Script) tea.Cmd {
 				go func() { runDone <- runCmd.Wait() }()
 			}
 			if runScanner.Scan() {
-				return outputMsg(runScanner.Text())
+				return base(runScanner.Text())
 			}
 			p = phaseDone
 			err := <-runDone
-			return scriptDone{err: err}
+			return done(err)
 
 		case phaseDone:
 			return nil
@@ -305,42 +336,29 @@ func runCompilable(ctx context.Context, s executor.Script) tea.Cmd {
 	}
 }
 
-func runDirect(ctx context.Context, s executor.Script) tea.Cmd {
+func runDirect(ctx context.Context, s executor.Script, base func(string) outputMsg, done func(error) scriptDone) tea.Cmd {
 	cmd, err := executor.Command(s)
 	if err != nil {
-		return func() tea.Msg {
-			return scriptDone{err: err}
-		}
+		return func() tea.Msg { return done(err) }
 	}
-
 	cmd = exec.CommandContext(ctx, cmd.Path, cmd.Args[1:]...)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return func() tea.Msg {
-			return scriptDone{err: err}
-		}
+		return func() tea.Msg { return done(err) }
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		return func() tea.Msg {
-			return scriptDone{err: err}
-		}
+		return func() tea.Msg { return done(err) }
 	}
-
 	if err := cmd.Start(); err != nil {
-		return func() tea.Msg {
-			return scriptDone{err: err}
-		}
+		return func() tea.Msg { return done(err) }
 	}
 
 	reader := io.MultiReader(stdout, stderr)
 	scanner := bufio.NewScanner(reader)
-	done := make(chan error, 1)
-
-	go func() {
-		done <- cmd.Wait()
-	}()
+	doneCh := make(chan error, 1)
+	go func() { doneCh <- cmd.Wait() }()
 
 	var finished bool
 	return func() tea.Msg {
@@ -348,16 +366,17 @@ func runDirect(ctx context.Context, s executor.Script) tea.Cmd {
 			return nil
 		}
 		if scanner.Scan() {
-			return outputMsg(scanner.Text())
+			return base(scanner.Text())
 		}
 		finished = true
-		err := <-done
-		return scriptDone{err: err}
+		err := <-doneCh
+		return done(err)
 	}
 }
 
-func processWithOR(text, apiKey string) tea.Cmd {
+func processWithOR(lines []string, apiKey string) tea.Cmd {
 	return func() tea.Msg {
+		text := strings.Join(lines, "\n")
 		result, err := openrouter.SendText(text, apiKey)
 		if err != nil {
 			return orError{err: err}
@@ -371,30 +390,32 @@ func (m Model) View() string {
 		return "Initializing..."
 	}
 
-	listWidth := m.width * 3 / 10
-	outputWidth := m.width - listWidth
+	var body string
 	statusWidth := m.width
 
-	if listWidth < 20 {
-		listWidth = 20
+	if m.showSidebar {
+		listWidth := m.width * 3 / 10
+		outputWidth := m.width - listWidth
+		if listWidth < 20 {
+			listWidth = 20
+		}
+		if outputWidth < 30 {
+			outputWidth = 30
+		}
+		listPanel := m.renderList(listWidth, m.height-4)
+		outputPanel := m.renderOutput(outputWidth, m.height-4)
+		body = lipgloss.JoinHorizontal(lipgloss.Top, listPanel, outputPanel)
+	} else {
+		outputPanel := m.renderOutput(m.width, m.height-4)
+		body = outputPanel
 	}
-	if outputWidth < 30 {
-		outputWidth = 30
-	}
-
-	listPanel := m.renderList(listWidth, m.height-4)
-	outputPanel := m.renderOutput(outputWidth, m.height-4)
-
-	body := lipgloss.JoinHorizontal(lipgloss.Top, listPanel, outputPanel)
 
 	statusBar := m.renderStatus(statusWidth)
-
 	return lipgloss.JoinVertical(lipgloss.Left, body, statusBar)
 }
 
 func (m Model) renderList(width, height int) string {
 	var b strings.Builder
-
 	b.WriteString(titleStyle.Width(width - 2).Render(" Scripts "))
 	b.WriteString("\n\n")
 
@@ -415,14 +436,18 @@ func (m Model) renderList(width, height int) string {
 		if s.Type == executor.TypeCompilable {
 			label += " [C]"
 		}
+
+		_, isRunning := m.running[s.Name]
 		line := "  " + label
 		if start+i == m.cursor {
 			line = "▸ " + label
-			if m.running && s.Name == m.currentScript {
+			if isRunning {
 				line = cursorStyle.Render(line) + " " + runningStyle.Render("●")
 			} else {
 				line = cursorStyle.Render(line)
 			}
+		} else if isRunning {
+			line = "  " + label + " " + runningStyle.Render("●")
 		}
 
 		b.WriteString(line)
@@ -436,26 +461,22 @@ func (m Model) renderList(width, height int) string {
 		Height(height).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("#3B82F6"))
-
 	return style.Render(b.String())
 }
 
 func (m Model) renderOutput(width, height int) string {
 	var b strings.Builder
 
+	runningCount := len(m.running)
 	title := " Output "
-	if m.running {
-		title = " Output (running) "
+	if runningCount > 0 {
+		title = fmt.Sprintf(" Output (%d running) ", runningCount)
 	}
 	b.WriteString(titleStyle.Width(width - 2).Render(title))
 	b.WriteString("\n\n")
 
 	if len(m.outputLines) == 0 {
-		if m.running {
-			b.WriteString("Waiting for output...")
-		} else {
-			b.WriteString("Select a script and press Enter to run it.")
-		}
+		b.WriteString("Select a script and press Enter to run it.")
 	} else {
 		start := m.vpOffset
 		end := start + height - 3
@@ -465,8 +486,24 @@ func (m Model) renderOutput(width, height int) string {
 		if start < 0 {
 			start = 0
 		}
+		// Assign a consistent color index per script name
+		nameIndex := map[string]int{}
+		idx := 0
 		for i := start; i < end; i++ {
-			b.WriteString(m.outputLines[i])
+			line := m.outputLines[i]
+			// Try to extract the [name] prefix
+			if strings.HasPrefix(line, "[") {
+				if closeIdx := strings.Index(line, "]"); closeIdx > 0 {
+					label := line[1:closeIdx]
+					if _, ok := nameIndex[label]; !ok {
+						nameIndex[label] = idx
+						idx++
+					}
+					style := labelStyles[nameIndex[label]%len(labelStyles)]
+					line = style.Render("["+label+"]") + line[closeIdx+1:]
+				}
+			}
+			b.WriteString(line)
 			if i < end-1 {
 				b.WriteString("\n")
 			}
@@ -478,19 +515,23 @@ func (m Model) renderOutput(width, height int) string {
 		Height(height).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("#3B82F6"))
-
 	return style.Render(b.String())
 }
 
 func (m Model) renderStatus(width int) string {
-	scriptName := m.currentScript
-	if scriptName == "" {
-		scriptName = "none"
+	runningCount := len(m.running)
+	runningNames := ""
+	if runningCount > 0 {
+		names := make([]string, 0, runningCount)
+		for name := range m.running {
+			names = append(names, name)
+		}
+		runningNames = strings.Join(names, ", ")
 	}
 
 	state := idleStyle.Render("Idle")
-	if m.running {
-		state = runningStyle.Render("Running")
+	if runningCount > 0 {
+		state = runningStyle.Render(fmt.Sprintf("Running (%d)", runningCount))
 	}
 
 	orLabel := orOffStyle.Render("OR: OFF")
@@ -498,14 +539,8 @@ func (m Model) renderStatus(width int) string {
 		orLabel = orOnStyle.Render("OR: ON")
 	}
 
-	var errText string
-	if m.runErr != nil {
-		errText = fmt.Sprintf(" | Exit: %s", m.runErr)
-	}
-
-	left := fmt.Sprintf(" %s | %s | %s%s ",
-		scriptName, state, orLabel, errText)
-	right := " ↑↓ navigate | Enter run | r toggle OR | q quit "
+	left := fmt.Sprintf(" %s | %s | %s ", runningNames, state, orLabel)
+	right := " s sidebar | Enter run | r toggle OR | q quit "
 
 	padding := width - lipgloss.Width(left) - lipgloss.Width(right)
 	if padding < 1 {
