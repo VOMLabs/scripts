@@ -31,11 +31,11 @@ def load_api_key() -> str:
 
 
 def get_input() -> str:
-    if not sys.stdin.isatty():
-        return sys.stdin.read()
     if len(sys.argv) > 1:
         with open(sys.argv[1]) as f:
             return f.read()
+    if not sys.stdin.isatty():
+        return sys.stdin.read()
     print(f"Usage: cat file.txt | {sys.argv[0]}  OR  {sys.argv[0]} file.txt", file=sys.stderr)
     sys.exit(1)
 
