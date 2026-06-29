@@ -1,22 +1,11 @@
-BINARY=scripty
-FIXMIC_BINARY=fix-mic
+BINARY=fix-mic
 
-.PHONY: all build build-fixmic install uninstall clean
+.PHONY: all build clean
 
-all: build build-fixmic
+all: build
 
 build:
-	go build -o $(BINARY) ./cmd/scripty/
-
-build-fixmic:
-	go build -o $(FIXMIC_BINARY) ./cmd/fix-mic/
-
-install: build
-	./$(BINARY) install
-
-uninstall:
-	rm -f ~/.local/bin/$(BINARY)
-	@echo "Removed ~/.local/bin/$(BINARY)"
+	go build -o $(BINARY) .
 
 clean:
-	rm -f $(BINARY) $(FIXMIC_BINARY)
+	rm -f $(BINARY)

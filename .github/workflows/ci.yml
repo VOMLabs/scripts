@@ -17,20 +17,8 @@ jobs:
           go-version: '1.26'
           cache: true
 
-      - name: Build scripty
-        run: go build -o scripty ./cmd/scripty/
+      - name: Build
+        run: go build -o fix-mic .
 
-      - name: Build fix-mic
-        run: go build -o fix-mic ./cmd/fix-mic/
-
-      - name: Verify builds
-        run: |
-          ./scripty --help 2>&1 || true
-          file scripty fix-mic
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: binaries
-          path: |
-            scripty
-            fix-mic
+      - name: Verify
+        run: file fix-mic
