@@ -66,11 +66,11 @@ scripty needs an [OpenRouter](https://openrouter.ai) API key for the txt2md feat
 
 ## Scripts included
 
-### `scripts/scripts/fix-path.py`
+### `scripts/fix-path.py`
 
 Rebuilds `PATH` from a clean set of known-good directories. Removes duplicates and unwanted SDK paths.
 
-### `scripts/scripts/txt2md.py`
+### `scripts/txt2md.py`
 
 Converts plain text to Markdown using the OpenRouter API. Reads from stdin or a file argument. Gets the API key from `~/.config/scripty/or/key.secret` or the `OPENROUTER_API_KEY` environment variable.
 

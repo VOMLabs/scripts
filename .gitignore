@@ -1,5 +1,7 @@
 /scripty
 /scripty.exe
+/fix-mic
+/fix-mic.exe
 /tmp/
 *.test
 *.out
