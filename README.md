@@ -10,15 +10,17 @@ Fixes Logitech PRO X headset microphone issues on Linux (PipeWire/PulseAudio).
 - Sets the correct default source and unmutes
 - Toggles the mute LED via `/dev/input` if stuck on
 - Restarts PipeWire-Pulse if changes were made
+- Restarts Discord and Vesktop to re-establish audio connections
 - Verifies audio is working
 
 ## Build
 
 ```
-make
+meson setup build
+meson compile -C build
 ```
 
-or:
+Or directly:
 
 ```
 go build -o fix-mic .
@@ -30,4 +32,9 @@ go build -o fix-mic .
 ./fix-mic
 ```
 
-Requires `pactl`, `parec`, and `systemctl --user` (part of PipeWire/PulseAudio).
+Press `q`, `esc`, or `Ctrl+C` to quit while running.
+
+## Requirements
+
+- `pactl`, `parec`, and `systemctl --user` (part of PipeWire/PulseAudio)
+- `discord` and `vesktop` binaries on `PATH` (optional — for automatic restart)
