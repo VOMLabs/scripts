@@ -1,10 +1,10 @@
-project('fix-mic', 'c',
+project('headset-fixer', 'c',
   default_options: ['bindir=.'],)
 
 go = find_program('go')
 
-custom_target('fix-mic',
-  output: 'fix-mic',
+custom_target('headset-fixer',
+  output: 'headset-fixer',
   input: 'main.go',
   build_by_default: true,
   console: true,

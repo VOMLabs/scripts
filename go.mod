@@ -1,4 +1,4 @@
-module fix-mic
+module headset-fixer
 
 go 1.26.4
 

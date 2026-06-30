@@ -1,10 +1,12 @@
-# fix-mic
+# headset-fixer
 
-Fixes Logitech PRO X headset microphone issues on Linux (PipeWire/PulseAudio).
+Fixes USB headset microphone issues on Linux (PipeWire/PulseAudio).
+
+Supports any USB headset — picks your mic from a list, then applies fixes.
 
 ## What it does
 
-- Detects the Logitech PRO X audio source
+- Detects all USB headset microphones and lets you pick one
 - Unloads echo-cancel modules that interfere with the mic
 - Disables echo-cancel config files
 - Sets the correct default source and unmutes
@@ -23,16 +25,16 @@ meson compile -C build
 Or directly:
 
 ```
-go build -o fix-mic .
+go build -o headset-fixer .
 ```
 
 ## Usage
 
 ```
-./fix-mic
+./headset-fixer
 ```
 
-Press `q`, `esc`, or `Ctrl+C` to quit while running.
+Arrow keys to pick your mic, Enter to start, `q`/`esc`/`Ctrl+C` to quit.
 
 ## Requirements
 
